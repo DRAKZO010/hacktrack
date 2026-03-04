@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const HackTrackApp());
@@ -689,13 +691,88 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  bool _isLoading = true;
 
-  final List<Map<String, dynamic>> _hackathons = [
-    {'title': 'AI Innovation Challenge 2025', 'organizer': 'TechCorp Global', 'tags': ['AI', 'ML', 'Deep Learning'], 'deadline': 'Mar 15, 2025', 'prize': '\$10,000', 'matchScore': 92, 'source': 'AI', 'colors': [const Color(0xFF6366F1), const Color(0xFF8B5CF6)]},
-    {'title': 'Web3 Builder Fest', 'organizer': 'Blockchain Foundation', 'tags': ['Blockchain', 'Web3', 'DeFi'], 'deadline': 'Mar 20, 2025', 'prize': '\$15,000', 'matchScore': 78, 'source': 'AI', 'colors': [const Color(0xFFF093FB), const Color(0xFFF5576C)]},
-    {'title': 'FinTech Innovation Sprint', 'organizer': 'FinTech Alliance', 'tags': ['Fintech', 'Payments', 'Banking'], 'deadline': 'Apr 5, 2025', 'prize': '\$20,000', 'matchScore': 85, 'source': 'Manual', 'colors': [const Color(0xFF4FACFE), const Color(0xFF00F2FE)]},
-    {'title': 'Flutter Global Hack', 'organizer': 'Google Developers', 'tags': ['Flutter', 'Mobile', 'Dart'], 'deadline': 'Apr 10, 2025', 'prize': '\$8,000', 'matchScore': 95, 'source': 'AI', 'colors': [const Color(0xFF43E97B), const Color(0xFF38F9D7)]},
+  List<Map<String, dynamic>> _aiRecommended = [];
+  List<Map<String, dynamic>> _endingSoon = [];
+  List<Map<String, dynamic>> _allLive = [];
+
+  final List<List<Color>> _gradientPool = [
+    [const Color(0xFF6366F1), const Color(0xFF8B5CF6)],
+    [const Color(0xFFF093FB), const Color(0xFFF5576C)],
+    [const Color(0xFF4FACFE), const Color(0xFF00F2FE)],
+    [const Color(0xFF43E97B), const Color(0xFF38F9D7)],
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchLiveHackathons();
+  }
+
+  Future<void> _fetchLiveHackathons() async {
+    try {
+      final response = await http.get(Uri.parse('https://devpost.com/api/hackathons?status=open'));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final List<dynamic> hackathonsData = data['hackathons'] ?? [];
+
+        List<Map<String, dynamic>> formattedList = [];
+        
+        for (int i = 0; i < hackathonsData.length; i++) {
+          final h = hackathonsData[i];
+          
+          // Parse themes
+          List<String> tags = [];
+          if (h['themes'] != null) {
+            for (var theme in h['themes']) {
+              tags.add(theme['name']);
+            }
+          }
+          
+          // Extract prize text from HTML span using regex (if possible) or just fallback
+          String prize = 'Swag/Other';
+          if (h['prize_amount'] != null) {
+             final prizeStr = h['prize_amount'].toString();
+             final match = RegExp(r'>([^<]+)<').firstMatch(prizeStr);
+             prize = match != null ? '\$${match.group(1)}' : prizeStr.replaceAll(RegExp(r'<[^>]*>'), '');
+          }
+
+          formattedList.add({
+            'title': h['title'] ?? 'Unknown',
+            'organizer': h['organization_name'] ?? 'Organizer',
+            'tags': tags.isNotEmpty ? tags.take(3).toList() : ['Hackathon'],
+            'deadline': h['submission_period_dates'] != null ? h['submission_period_dates'].toString().split('-').last.trim() : 'Unknown',
+            'prize': prize,
+            // Assign fake AI match score between 70 - 99
+            'matchScore': 99 - (i % 25), 
+            'source': 'Devpost',
+            'colors': _gradientPool[i % _gradientPool.length],
+            'url': h['url'],
+            'thumbnail_url': h['thumbnail_url']?.toString().replaceAll('//', 'https://'),
+          });
+        }
+
+        setState(() {
+          _allLive = List.from(formattedList);
+          
+          // AI Recommended: Top 5 by match score
+          _aiRecommended = List.from(formattedList)..sort((a, b) => (b['matchScore'] as int).compareTo(a['matchScore'] as int));
+          _aiRecommended = _aiRecommended.take(5).toList();
+
+          // Ending Soon: Simulate by taking a slice
+          _endingSoon = List.from(formattedList);
+          if (_endingSoon.length > 5) {
+             _endingSoon = _endingSoon.sublist(5, 10);
+          }
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      // print('Error fetching hackathons: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -720,51 +797,72 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(icon: const Icon(Icons.account_circle_outlined, color: Colors.white), onPressed: () {}),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(color: const Color(0xFF1D1E33), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[800]!)),
-              child: Row(
-                children: [
-                  Icon(Icons.search, color: Colors.grey[400]),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(hintText: 'Search hackathons...', hintStyle: TextStyle(color: Colors.grey[500]), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 16)),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFF6366F1)))
+        : SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(color: const Color(0xFF1D1E33), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[800]!)),
+                    child: Row(
+                      children: [
+                        Icon(Icons.search, color: Colors.grey[400]),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(hintText: 'Search hackathons...', hintStyle: TextStyle(color: Colors.grey[500]), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 16)),
+                          ),
+                        ),
+                        Icon(Icons.tune, color: Colors.grey[400]),
+                      ],
                     ),
                   ),
-                  Icon(Icons.tune, color: Colors.grey[400]),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                _buildStatCard('12', 'Discovered', const Color(0xFF6366F1)),
-                const SizedBox(width: 12),
-                _buildStatCard('3', 'Registered', const Color(0xFF10B981)),
-                const SizedBox(width: 12),
-                _buildStatCard('5', 'Deadlines', const Color(0xFFF59E0B)),
+                ),
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    children: [
+                      _buildStatCard('${_allLive.length}', 'Live Now', const Color(0xFF6366F1)),
+                      const SizedBox(width: 12),
+                      _buildStatCard('0', 'Registered', const Color(0xFF10B981)),
+                      const SizedBox(width: 12),
+                      _buildStatCard('${_endingSoon.length}', 'Ending Soon', const Color(0xFFF59E0B)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 30),
+                
+                // Track 1: AI Recommended
+                _buildTrackHeader('⚡ Top Matches for You', 'Curated by AI'),
+                const SizedBox(height: 12),
+                _buildHorizontalTrack(_aiRecommended),
+                const SizedBox(height: 24),
+
+                // Track 2: Ending Soon
+                _buildTrackHeader('⏳ Ending Soon', 'Don\'t miss out'),
+                const SizedBox(height: 12),
+                _buildHorizontalTrack(_endingSoon),
+                const SizedBox(height: 24),
+                
+                // Track 3: All Live
+                _buildTrackHeader('🌐 All Live Hackathons', 'Explore everything'),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Column(
+                    children: _allLive.take(10).map((h) => _buildHackathonListItem(h)).toList(),
+                  ),
+                ),
               ],
             ),
-            const SizedBox(height: 28),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('🤖 AI Discovered', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                TextButton(onPressed: () {}, child: const Text('See all', style: TextStyle(color: Color(0xFF6366F1)))),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ..._hackathons.map((h) => _buildHackathonCard(h)),
-          ],
-        ),
-      ),
+          ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AddHackathonScreen())),
         backgroundColor: const Color(0xFF6366F1),
@@ -804,7 +902,91 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildHackathonCard(Map<String, dynamic> h) {
+  Widget _buildTrackHeader(String title, String subtitle) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+              Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+            ],
+          ),
+          TextButton(onPressed: () {}, child: const Text('See all', style: TextStyle(color: Color(0xFF6366F1)))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHorizontalTrack(List<Map<String, dynamic>> items) {
+    return SizedBox(
+      height: 220,
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        scrollDirection: Axis.horizontal,
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final h = items[index];
+          return GestureDetector(
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => HackathonDetailScreen(hackathon: h))),
+            child: Container(
+              width: 280,
+              margin: const EdgeInsets.symmetric(horizontal: 6),
+              decoration: BoxDecoration(color: const Color(0xFF1D1E33), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey[800]!)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 80, 
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: h['colors']), 
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      image: h['thumbnail_url'] != null 
+                        ? DecorationImage(image: NetworkImage(h['thumbnail_url']), fit: BoxFit.cover, colorFilter: ColorFilter.mode(Colors.black.withValues(alpha: 0.4), BlendMode.darken))
+                        : null,
+                    ),
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: Container(
+                        margin: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+                        child: Text('${h['matchScore']}% Match', style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(h['title'], style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white), maxLines: 2, overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 6),
+                        Text(h['organizer'], style: TextStyle(fontSize: 12, color: Colors.grey[400]), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        const Spacer(),
+                        Row(
+                          children: [
+                            Icon(Icons.calendar_today_outlined, size: 14, color: Colors.grey[400]),
+                            const SizedBox(width: 4),
+                            Expanded(child: Text(h['deadline'], style: TextStyle(fontSize: 12, color: Colors.grey[400]), overflow: TextOverflow.ellipsis)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHackathonListItem(Map<String, dynamic> h) {
     return GestureDetector(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => HackathonDetailScreen(hackathon: h))),
       child: Container(
@@ -887,21 +1069,27 @@ class HackathonDetailScreen extends StatelessWidget {
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
-            expandedHeight: 200,
+            expandedHeight: 250,
             pinned: true,
             backgroundColor: const Color(0xFF0A0E21),
             leading: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
-                decoration: BoxDecoration(gradient: LinearGradient(colors: hackathon['colors'], begin: Alignment.topLeft, end: Alignment.bottomRight)),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: hackathon['colors'], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                  image: hackathon['thumbnail_url'] != null 
+                    ? DecorationImage(image: NetworkImage(hackathon['thumbnail_url']), fit: BoxFit.cover, colorFilter: ColorFilter.mode(Colors.black.withValues(alpha: 0.5), BlendMode.darken))
+                    : null,
+                ),
                 child: Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const SizedBox(height: 40),
-                      const Icon(Icons.rocket_launch_rounded, size: 60, color: Colors.white),
+                      if (hackathon['thumbnail_url'] == null)
+                        const Icon(Icons.rocket_launch_rounded, size: 60, color: Colors.white),
                       const SizedBox(height: 8),
-                      Text(hackathon['organizer'], style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                      Text(hackathon['organizer'], style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
@@ -946,7 +1134,11 @@ class HackathonDetailScreen extends StatelessWidget {
                   SizedBox(
                     width: double.infinity, height: 56,
                     child: OutlinedButton.icon(
-                      onPressed: () {},
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Would open: ${hackathon['url']}'), backgroundColor: const Color(0xFF6366F1), behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        );
+                      },
                       icon: const Icon(Icons.open_in_browser, color: Color(0xFF6366F1)),
                       label: const Text('Visit Website', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF6366F1))),
                       style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFF6366F1)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
